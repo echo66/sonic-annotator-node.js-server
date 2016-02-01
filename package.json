@@ -1,0 +1,35 @@
+{
+  "name": "sonic-annotator-node.js-server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/echo66/sonic-annotator-node.js-server.git"
+  },
+  "dependencies": {
+    "log4js": "*", 
+    "abs": "*", 
+    "node-uuid": "*", 
+    "jsonfile": "*", 
+    "node-cache": "*", 
+    "shelljs": "*", 
+    "mongoskin": "*", 
+    "body-parser": "*", 
+    "mathjs": "*", 
+    "express": "*", 
+  }
+  "keywords": [
+    "sonic",
+    "annotator"
+  ],
+  "author": "Bruno Dias",
+  "license": "SEE LICENSE IN LICENSE",
+  "bugs": {
+    "url": "https://github.com/echo66/sonic-annotator-node.js-server/issues"
+  },
+  "homepage": "https://github.com/echo66/sonic-annotator-node.js-server#readme"
+}
