@@ -109,6 +109,10 @@ module.exports = function(sonicAnnotatorPath, audioFilesDir, featuresFilesDir) {
 			res.json(values);
 		}, (err) => error1(err, res));
 	});
+
+	router.get('/features', (req, res) => {
+		misc.get_plugins_list().then((plugins) => res.json(plugins)).catch((err) => error1(err, res));
+	});
 	
 	
 	// TODO: DEPRECATE THIS
