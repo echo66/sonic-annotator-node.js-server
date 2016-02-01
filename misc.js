@@ -213,17 +213,10 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 
 	function get_plugins_list() {
 		var p = new Promise((resolve, reject) => {
-			var plugins = new Set();
+			var plugins;
 			exec(BINARY + ' -l', (err, stdout, stderr) => {
-				console.log("oi")
-				stdout.split('\n').forEach((id) => { 
-					if (err) {
-						reject(err);
-						return;
-					} 
-
-					if (id !== '') plugins.add(id);
-				});
+				plugins = stdout.split('\n');
+				plugins.length = Math.max(0, plugins.length - 1);
 				resolve(plugins);
 			});
 		});
