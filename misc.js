@@ -9,6 +9,7 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 	var math = require('mathjs');
 	var http = require('http');
 	var fs = require('fs');
+	var absp = require('abs');
 	require('shelljs/global');
 
 
@@ -22,7 +23,7 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 	var BINARY 				= sonicAnnotatorPath;
 
 
-	function summary(intervals, intervalsMap) {
+	function summary(intervals, intervalsMap, stats) {
 		var p = new Promise((resolve, reject) => {
 			var summary = intervals.map((interval) => {
 				var data = intervalsMap.get(interval);
@@ -54,6 +55,7 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 				}
 				return obj;
 			});
+			resolve(summary);
 		});
 		return p;
 	}
@@ -66,17 +68,34 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 				var datum = data[i];
 				var time = datum.time.value;
 				var value = datum.value;
+				var hop;
+				if (i == data.length-1) {
+					hop = Math.abs(data[i].time.value - data[i-1].time.value);
+				} else {
+					hop = Math.abs(data[i].time.value - data[i+1].time.value);
+				}
+				hop = (!isNaN(hop))? hop : Math.abs(data[i].time.value - data[i+1].time.value);
 				if (time >= minStart) 
 					if (time <= maxEnd) {
 						for (var j=0; j<intervals.length; j++) {
-							if (time >= intervals[j][0] && time <= intervals[j][1]) {
+							var d_start = time;
+							var d_end = time + hop;
+							var i_start = intervals[j][0];
+							var i_end = intervals[j][1];
+
+							if (d_start < i_end && d_end > i_start) {
 								intervalsMap.get(intervals[j]).push(value);
 							}
 						}
 					} else 
 						break;
 			}
-			resolve(intervals, intervalsMap, minStart, maxEnd);
+			resolve({
+				intervals : intervals, 
+				intervalsMap : intervalsMap, 
+				minStart : minStart, 
+				maxEnd : maxEnd
+			});
 		});
 		return p;
 	}
@@ -84,22 +103,31 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 
 	function intervals_pre_processing(strIntervals) {
 		var p = new Promise((resolve, reject) => {
-			var intervals = new Array(strIntervals.length) || [];
+			var intervals = [];
 			var minStart = Infinity;
 			var maxEnd = -Infinity;
 			var intervalsMap = new Map();
+			var aux = new Set();
 			strIntervals.forEach((e, i) => {
+				if (aux.has(e)) return;
+				aux.add(e);
 				e = e.split(',');
-				var start = new Number(e[0]);
-				var end = new Number(e[1]);
-				intervals[i] = [start, end];
-				intervalsMap.set(intervals[i], []);
+				var start = parseFloat(e[0]);
+				var end = parseFloat(e[1]);
+				var interval = [start, end];
+				intervals.push(interval);
+				intervalsMap.set(interval, []);
 				minStart = (minStart > start)? start : minStart;
 				maxEnd = (maxEnd < end)? end : maxEnd;
 			});
 			intervals.sort((a,b) => a[0] - b[0]);
 
-			resolve(intervals, intervalsMap, minStart, maxEnd);
+			resolve({
+				intervals : intervals, 
+				intervalsMap : intervalsMap, 
+				minStart : minStart, 
+				maxEnd : maxEnd
+			});
 		});
 		return p;
 	}
@@ -149,15 +177,34 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 		var p = new Promise((resolve, reject) => {
 			var plugins = new Set();
 			exec(BINARY + ' -l', (err, stdout, stderr) => {
-				stdout.split('\n').forEach((id) => { 
-					if (err) {
-						reject(err);
-						return;
-					} 
+				if (err) {
+					reject(err);
+				} else {
+					stdout.split('\n').forEach((id) => { 
+						if (id !== '') plugins.add(id);	
+					});
+					resolve(plugins.has(plugin));
+				}
+			});
+		});
+		return p;
+	}
 
-					if (id !== '') plugins.add(id);
-				});
-				resolve(plugins.has(plugin));
+	function plugins_exist(plugins) {
+		var p = new Promise((resolve, reject) => {
+			var plugins = new Set(plugins);
+			exec(BINARY + ' -l', (err, stdout, stderr) => {
+				if (err) {
+					reject(err);
+				} else {
+					var aux = stdout.split('\n');
+					aux.length--;
+					var systemPlugins = new Set(aux);
+					for (var i=0; i < plugins.length; i++) 
+						if (!systemPlugins.has(plugin))
+							resolve(false);
+					resolve(true);
+				}
 			});
 		});
 		return p;
@@ -187,7 +234,7 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 	function download_file(url) {
 		var p = new Promise((resolve, reject) => {
 			var filename = uuid.v1();
-			var filepath = PATH_AUDIO_FILES + '/' + filename;
+			var filepath = absp(PATH_AUDIO_FILES + '/' + filename);
 			var file = fs.createWriteStream(filepath);
 			var request = http.get(url, function(response) {
 				response.pipe(file);
@@ -206,7 +253,7 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 	function sonic_annotator_extraction(plugins, audioFilepath, featuresFilePath) {
 		var p = new Promise((resolve, reject) => {
 			var writers = '-w jams --jams-stdout';
-			var _featuresFilePath = featuresFilePath || PATH_FEATURES_FILES + '/' + uuid.v1();
+			var _featuresFilePath = absp(featuresFilePath || PATH_FEATURES_FILES + '/' + uuid.v1())
 			var commandStr = [BINARY, '-n', writers, ' -d ' + plugins.join(' -d '), '"' + audioFilepath + '"', ' > ' + featuresFilePath].join(' ');
 			console.log(commandStr);
 			var command = exec(commandStr, (err, stdout, stderr) => {
@@ -250,6 +297,7 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 		get_entry : get_entry, 
 		update_entry : update_entry, 
 		plugin_exists : plugin_exists, 
+		plugins_exist : plugins_exist,
 		get_plugins_list : get_plugins_list, 
 		download_file : download_file, 
 		sonic_annotator_extraction : sonic_annotator_extraction, 
