@@ -1,8 +1,8 @@
 module.exports = function(sonicAnnotatorPath, audioFilesDir, featuresFilesDir) {
 	var absp = require("abs");
 
-	var PATH_AUDIO_FILES 	= absp(audioFilesDir || './temp/audio');
-	var PATH_FEATURES_FILES = absp(featuresFilesDir || './temp/feats');
+	var PATH_AUDIO_FILES 	= absp(audioFilesDir || './temp/audio/');
+	var PATH_FEATURES_FILES = absp(featuresFilesDir || './temp/feats/');
 	var PATH_BINARY 		= absp(sonicAnnotatorPath || '/home/echo66/tese/features-extractors/sonic-annotator/sonic-annotator');
 	var DEFAULT_PLUGINS = [
 		'vamp:nnls-chroma:nnls-chroma:chroma', 
@@ -43,11 +43,14 @@ module.exports = function(sonicAnnotatorPath, audioFilesDir, featuresFilesDir) {
 	
 	router.get('/', (req, res) => {
 		var url = req.query.url;
+		if (url == undefined)
+			res.status(500).json({message: 'You did not provide an URL.'})
+
 		var features = req.query.features || [];
 		if (features.length == 0)
 			res.status(500).json({message: 'You need to specify, at least, one feature.'});
 
-		var tempFilepath = absp('./temp/feats/' + uuid.v1());
+		var tempFilepath = absp(PATH_FEATURES_FILES + '/' + uuid.v1());
 		var promises = [];
 		featuresToExtract = [];
 
@@ -56,12 +59,23 @@ module.exports = function(sonicAnnotatorPath, audioFilesDir, featuresFilesDir) {
 				misc.get_entry('extractions', {url: url, feature_id: featureID})
 						.then((entry) => {
 							if (entry) {
+								logger.info('Found existing extraction data.');
 
-								if (req.query.stats && req.query.intervals && entry.data) {
-									var stats = req.query.stats;
-									var intervals = req.query.intervals;
+								if (entry.status == 'done') {
 
-									misc.intervals_pre_processing(req.query.intervals)
+									var stats, intervals;
+
+									if (req.query.intervals instanceof Array) 
+										intervals = req.query.intervals;
+									else 
+										intervals = [(0 + "," + entry.duration)];
+
+									if (req.query.stats instanceof Array) 
+										stats = req.query.stats;
+									else	
+										stats = STATS;
+
+									misc.intervals_pre_processing(intervals)
 											.then((O1) => {
 												misc.group_interval_data(entry.data, O1.intervals, O1.intervalsMap, O1.minStart, O1.maxEnd)
 													.then((O2) => {
@@ -72,6 +86,7 @@ module.exports = function(sonicAnnotatorPath, audioFilesDir, featuresFilesDir) {
 																}).catch((err) => error2(err, reject))
 													}).catch((err) => error2(err, reject));
 											}).catch((err) => error2(err, reject));
+									
 								} else {
 									logger.info('found');
 									resolve(entry);
@@ -79,18 +94,23 @@ module.exports = function(sonicAnnotatorPath, audioFilesDir, featuresFilesDir) {
 								
 							} else {
 								var obj = {
-									url: url, 
-									feature_id: featureID,  
-									status: 'pending',
-									tempFile: tempFilepath, 
-									settings: null, 
-									data: null
+									url: url, feature_id: featureID,  
+									status: 'pending', tempFile: tempFilepath, 
+									settings: null, data: null
 								};
 								misc.add_entry('extractions', obj)
 										.then((entry) => {
 											featuresToExtract.push(entry.feature_id)
 											resolve(entry);
-										}).catch((err) => error2(err, reject));
+										}).catch((err) => {
+											misc.get_entry('extractions', {url:url, feature_id: featureID, tempFile: tempFilepath})
+													.then((entry) => {
+														entry.status = 'error';
+														misc.update_entry('extractions', entry);
+														error2(err, reject);
+													})
+													.catch((err) => error2(err, reject));
+										});
 							}
 						}).catch((err) => error2(err, reject))
 			}));
@@ -107,51 +127,21 @@ module.exports = function(sonicAnnotatorPath, audioFilesDir, featuresFilesDir) {
 				extractionWorker.send(instructions);
 			}
 			res.json(values);
-		}, (err) => error1(err, res));
+		}, (err) => {
+			features.forEach((featureID) => {
+				misc.get_entry('extractions', {tempFile: absp(tempFilepath), feature_id: featureID})
+						.then((entry) => {
+							entry.status = 'error';
+							misc.update_entry('extractions', entry)
+						});
+			})
+			
+			error1(err, res);
+		});
 	});
 
 	router.get('/features', (req, res) => {
 		misc.get_plugins_list().then((plugins) => res.json(plugins)).catch((err) => error1(err, res));
-	});
-	
-	
-	// TODO: DEPRECATE THIS
-	router.get('/summary', (req, res) => {
-		var url = req.query.url;
-		var feature = req.query.feature;
-		var stats = req.query.stats || [];
-		if (stats == 'all') {
-			stats = new Array();
-			STATS.forEach((stat) => stats.push(stat));
-		} 
-
-		misc.intervals_pre_processing(req.query.intervals)
-				.then((O1) => {
-					misc.get_entry('extractions', { url: url })
-							.then((entry) => {
-								misc.group_interval_data(entry.data, O1.intervals, O1.intervalsMap, O1.minStart, O1.maxEnd)
-										.then((O2) => {
-											misc.summary(O2.intervals, O2.intervalsMap, stats)
-													.then((summary) => {
-														res.send(summary);
-													}).catch((err) => error1(err, res));
-										}).catch((err) => error1(err, res));
-							}).catch((err) => error1(err, res));
-					
-				}).catch((err) => error1(err, res));
-	});
-
-
-	// TODO: DEPRECATE THIS
-	/* Retrieve features within a time interval. */
-	router.get('/interval', (req, res) => {
-		var id = req.query.id;
-		var feature = req.query.feature;
-		var start = new Number(req.query.start);
-		var end = new Number(req.query.end);
-		interval_data(id, feature, start, end).then((intervalData) => {
-			res.send(intervalData);
-		}).catch((error) => error1(err, res));
 	});
 
 

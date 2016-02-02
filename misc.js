@@ -10,6 +10,7 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 	var http = require('http');
 	var fs = require('fs');
 	var absp = require('abs');
+	var wget = require('wget-improved');
 	require('shelljs/global');
 
 
@@ -83,7 +84,7 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 							var i_start = intervals[j][0];
 							var i_end = intervals[j][1];
 
-							if (d_start < i_end && d_end > i_start) {
+							if (d_start <= i_end && d_end >= i_start) {
 								intervalsMap.get(intervals[j]).push(value);
 							}
 						}
@@ -228,16 +229,24 @@ module.exports = function(audioFilesDir, featuresFilesDir, sonicAnnotatorPath) {
 		var p = new Promise((resolve, reject) => {
 			var filename = uuid.v1();
 			var filepath = absp(PATH_AUDIO_FILES + '/' + filename);
-			var file = fs.createWriteStream(filepath);
-			var request = http.get(url, function(response) {
-				response.pipe(file);
-				file.on('finish', function() {
-					file.close(()=>resolve(filepath));
-				});
-			}).on('error', function(err) { 
-				fs.unlink(filepath); 
+			var download = wget.download(url, filepath, {});
+			download.on('end', (output) => {
+				resolve(filepath);
+			});
+			download.on('error', (err) => {
+				fs.unlink(filepath);
 				reject(err);
 			});
+			// var file = fs.createWriteStream(filepath);
+			// var request = http.get(url, function(response) {
+			// 	response.pipe(file);
+			// 	file.on('finish', function() {
+			// 		file.close(()=>resolve(filepath));
+			// 	});
+			// }).on('error', function(err) { 
+			// 	fs.unlink(filepath); 
+			// 	reject(err);
+			// });
 		});
 		return p;
 	}

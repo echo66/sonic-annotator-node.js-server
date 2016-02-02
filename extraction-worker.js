@@ -5,9 +5,10 @@ var absp = require("abs");
 var uuid = require('node-uuid');
 var jsonfile = require('jsonfile');
 var NodeCache = require("node-cache");
+var ffmpeg = require("fluent-ffmpeg");
 require('shelljs/global');
 
-var audioFileCache = new NodeCache( { stdTTL: 60, checkperiod: 60, useClones: false } );
+var audioFileCache = new NodeCache( { stdTTL: 60*5, checkperiod: 60, useClones: false } );
 audioFileCache.on('expired', function(key, value) {
 	logger.info("cache element expired");
 	value.then((filepath) => rm(filepath))
@@ -26,7 +27,7 @@ function insert_features(OBJ, featuresFilepath) {
 					feature_id: meta.annotator.transform_id
 				}).then((extractionEntry) => {
 
-					extractionEntry.status = 'done';
+					// extractionEntry.status = 'done';
 					extractionEntry.settings = {};
 					if (meta.annotator.step_size !== undefined) 
 						extractionEntry.settings.step_size = meta.annotator.step_size;
@@ -40,13 +41,14 @@ function insert_features(OBJ, featuresFilepath) {
 					data.sort((a,b) => a.time.value - b.time.value);
 					extractionEntry.data = data;
 					delete extractionEntry.tempFile;
-					misc.update_entry('extractions', extractionEntry).then(logger.info('updated entry'));
-					rm('-f', featuresFilepath);
+					misc.update_entry('extractions', extractionEntry).then(logger.info('Updated extraction entry ' + extractionEntry._id));
 
 				}).catch((err) => logger.error(err));
 			});
 		}
 	}
+
+	rm('-f', featuresFilepath);
 }
 
 function extract_features(plugins, url, tempFilepath) {
@@ -94,31 +96,52 @@ process.on('message', function(data) {
 
 	misc.plugins_exist(data.plugins)
 			.then((exist) => {
-				var plugins = data.plugins;
-				var tempFilepath = data.tempFile;
-				
-				audioFileCache.get(url, (err, value) => {
-					if (!err) {
-						if (value == undefined) {
-							logger.info('Downloading '+url);
-							var value = misc.download_file(url);
-							audioFileCache.set(url, value);
-						}
-						value.then((filepath) => {
-							extract_features(plugins, filepath, tempFilepath)
-						}).catch((err) => {
-							plugins.forEach((plugin) => {
-								misc.get_entry('extractions', { tempFile: tempFilepath, feature_id: plugin })
-										.then((entry) => {
-											entry.status = 'error';
-											misc.update_entry('extractions', entry)
-													.then(() => logger.error(err))
-													.catch((err) => logger.error(err));
-										}).catch((err) => logger.error(err));
+
+				if (exist) {
+					var plugins = data.plugins;
+					var tempFilepath = data.tempFile;
+					
+					audioFileCache.get(url, (err, value) => {
+						if (!err) {
+							if (value == undefined) {
+								logger.info('Downloading '+url);
+								var value = misc.download_file(url);
+								audioFileCache.set(url, value);
+							}
+							value.then((filepath) => {
+								extract_features(plugins, filepath, tempFilepath);
+								ffmpeg(filepath).ffprobe((err, data) => {
+									if (!err) {
+										plugins.forEach((plugin) => {
+											misc.get_entry('extractions', { tempFile: tempFilepath, feature_id: plugin })
+											.then((entry) => {
+												entry.status = 'done';
+												entry.duration = data.format.duration;
+												misc.update_entry('extractions', entry)
+														.catch((err) => logger.error(err));
+											}).catch((err) => logger.error(err));
+										});
+									} else {
+										logger.error(err);
+									}
+								});
+							}).catch((err) => {
+								plugins.forEach((plugin) => {
+									misc.get_entry('extractions', { tempFile: tempFilepath, feature_id: plugin })
+											.then((entry) => {
+												entry.status = 'error';
+												misc.update_entry('extractions', entry)
+														.then(() => logger.error(err))
+														.catch((err) => logger.error(err));
+											}).catch((err) => logger.error(err));
+								});
 							});
-						});
-					} else {
-						logger.error(err);
-					}});
+						} else {
+							logger.error(err);
+						}});
+				} else {
+					logger.error('Requested unknown feature.');
+				}
+				
 			}).catch((err) => logger.error(err));
 });
